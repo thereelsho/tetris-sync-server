@@ -1,34 +1,35 @@
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
+const path = require("path");
 
 const app = express();
-app.get("/", (_req, res) => res.send("Tetris sync server running."));
+
+// ✅ Serve static files (index.html, version.json, etc.) from repo root
+app.use(express.static(path.join(__dirname)));
+
+// Default route -> serve index.html
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-let gameState = null;
-
 wss.on("connection", (ws) => {
   console.log("Client connected");
 
-  // Send current state to new client
-  if (gameState) {
-    ws.send(JSON.stringify({ type: "state", data: gameState }));
-  }
+  ws.on("message", (message) => {
+    // Broadcast message to all clients
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
+  });
 
-  ws.on("message", (msg) => {
-    const data = JSON.parse(msg);
-    if (data.type === "update") {
-      gameState = data.data;
-      // broadcast to all clients
-      wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({ type: "state", data: gameState }));
-        }
-      });
-    }
+  ws.on("close", () => {
+    console.log("Client disconnected");
   });
 });
 
