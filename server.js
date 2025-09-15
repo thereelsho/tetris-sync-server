@@ -5,10 +5,8 @@ const path = require("path");
 
 const app = express();
 
-// ✅ Serve static files (index.html, version.json, etc.) from repo root
 app.use(express.static(path.join(__dirname)));
 
-// Default route -> serve index.html
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
@@ -16,12 +14,15 @@ app.get("/", (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// Helper: safe broadcast to all clients
-function broadcastJSON(data) {
-  const json = JSON.stringify(data);
+// Broadcast helper
+function broadcast(data, isRaw = false) {
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(json);
+      if (isRaw) {
+        client.send(data.toString());  // ✅ raw string for SL
+      } else {
+        client.send(JSON.stringify(data)); // ✅ JSON for browsers
+      }
     }
   });
 }
@@ -29,22 +30,22 @@ function broadcastJSON(data) {
 wss.on("connection", (ws) => {
   console.log("✅ Client connected");
 
-  // Send welcome message
+  // Always greet browser clients with JSON
   ws.send(JSON.stringify({ type: "welcome", message: "Connected to server" }));
 
   ws.on("message", (message) => {
     let parsed;
-
     try {
-      // Client should send JSON strings
       parsed = JSON.parse(message);
-    } catch (err) {
-      console.warn("⚠️ Received non-JSON message, wrapping:", message.toString());
-      parsed = { type: "raw", data: message.toString() };
+    } catch {
+      // If not JSON, treat it as raw (from SL)
+      console.log("⚠️ Non-JSON message (likely SL):", message.toString());
+      broadcast(message, true); // send back as raw string
+      return;
     }
 
-    // Echo back to all clients as JSON
-    broadcastJSON({
+    // If valid JSON, rebroadcast as JSON
+    broadcast({
       type: "broadcast",
       from: "server",
       data: parsed,
