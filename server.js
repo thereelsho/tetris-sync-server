@@ -2,6 +2,8 @@ const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
 const path = require("path");
+const { createCanvas } = require("canvas");
+const fs = require("fs");
 
 const app = express();
 
@@ -19,7 +21,13 @@ let latestState = { type: "init", data: "no state yet", timestamp: Date.now() };
 
 // Broadcast helper
 function broadcast(data, isRaw = false) {
-  if (!isRaw) latestState = data; // save last JSON state
+  if (!isRaw) {
+    latestState = data;
+    // If this is a board update, redraw board.png
+    if (data?.data?.data?.board) {
+      renderBoardToPNG(data.data.data.board);
+    }
+  }
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(isRaw ? data.toString() : JSON.stringify(data));
@@ -38,7 +46,7 @@ wss.on("connection", (ws) => {
       parsed = JSON.parse(message); // browsers send JSON
     } catch {
       parsed = { type: "raw", data: message.toString() };
-      broadcast(parsed, true); // rebroadcast raw
+      broadcast(parsed, true);
       return;
     }
 
@@ -54,10 +62,46 @@ wss.on("connection", (ws) => {
   ws.on("close", () => console.log("❌ Browser client disconnected"));
 });
 
-// ✅ REST endpoint for SL prims
+// ✅ REST endpoint for SL prims (raw JSON)
 app.get("/state", (req, res) => {
   res.json(latestState);
 });
+
+// ✅ Serve board.png
+app.get("/board.png", (req, res) => {
+  const filePath = path.join(__dirname, "board.png");
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.status(404).send("Board not ready");
+  }
+});
+
+// Function: render the board into board.png
+function renderBoardToPNG(board) {
+  const cellSize = 20;
+  const width = board[0].length * cellSize;
+  const height = board.length * cellSize;
+
+  const canvas = createCanvas(width, height);
+  const ctx = canvas.getContext("2d");
+
+  // black background
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, width, height);
+
+  for (let y = 0; y < board.length; y++) {
+    for (let x = 0; x < board[0].length; x++) {
+      let val = board[y][x];
+      if (val && val !== 0) {
+        ctx.fillStyle = val; // already a hex string like "#3877FF"
+        ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+      }
+    }
+  }
+
+  fs.writeFileSync(path.join(__dirname, "board.png"), canvas.toBuffer("image/png"));
+}
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, "0.0.0.0", () => {
