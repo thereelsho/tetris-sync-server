@@ -16,24 +16,48 @@ app.get("/", (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// Helper: safe broadcast to all clients
+function broadcastJSON(data) {
+  const json = JSON.stringify(data);
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(json);
+    }
+  });
+}
+
 wss.on("connection", (ws) => {
-  console.log("Client connected");
+  console.log("✅ Client connected");
+
+  // Send welcome message
+  ws.send(JSON.stringify({ type: "welcome", message: "Connected to server" }));
 
   ws.on("message", (message) => {
-    // Broadcast message to all clients
-    wss.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
+    let parsed;
+
+    try {
+      // Client should send JSON strings
+      parsed = JSON.parse(message);
+    } catch (err) {
+      console.warn("⚠️ Received non-JSON message, wrapping:", message.toString());
+      parsed = { type: "raw", data: message.toString() };
+    }
+
+    // Echo back to all clients as JSON
+    broadcastJSON({
+      type: "broadcast",
+      from: "server",
+      data: parsed,
+      timestamp: Date.now(),
     });
   });
 
   ws.on("close", () => {
-    console.log("Client disconnected");
+    console.log("❌ Client disconnected");
   });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server listening on ${PORT}`);
+  console.log(`🚀 Server listening on port ${PORT}`);
 });
