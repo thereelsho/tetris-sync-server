@@ -6,6 +6,15 @@
     "start": "node server.js"
   },
   "dependencies": {
+  "name": "tetris-sync-server",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.17.0",
+    "canvas": "^2.11.2"
+  }
+}
+
     "express": "^4.19.2",
     "ws": "^8.18.0"
   }
