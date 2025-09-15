@@ -14,48 +14,49 @@ app.get("/", (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// ✅ store latest broadcast for SL prims
+let latestState = { type: "init", data: "no state yet", timestamp: Date.now() };
+
 // Broadcast helper
 function broadcast(data, isRaw = false) {
+  if (!isRaw) latestState = data; // save last JSON state
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
-      if (isRaw) {
-        client.send(data.toString());  // ✅ raw string for SL
-      } else {
-        client.send(JSON.stringify(data)); // ✅ JSON for browsers
-      }
+      client.send(isRaw ? data.toString() : JSON.stringify(data));
     }
   });
 }
 
 wss.on("connection", (ws) => {
-  console.log("✅ Client connected");
+  console.log("✅ Browser client connected");
 
-  // Always greet browser clients with JSON
   ws.send(JSON.stringify({ type: "welcome", message: "Connected to server" }));
 
   ws.on("message", (message) => {
     let parsed;
     try {
-      parsed = JSON.parse(message);
+      parsed = JSON.parse(message); // browsers send JSON
     } catch {
-      // If not JSON, treat it as raw (from SL)
-      console.log("⚠️ Non-JSON message (likely SL):", message.toString());
-      broadcast(message, true); // send back as raw string
+      parsed = { type: "raw", data: message.toString() };
+      broadcast(parsed, true); // rebroadcast raw
       return;
     }
 
-    // If valid JSON, rebroadcast as JSON
-    broadcast({
+    const broadcastData = {
       type: "broadcast",
-      from: "server",
       data: parsed,
       timestamp: Date.now(),
-    });
+    };
+
+    broadcast(broadcastData, false);
   });
 
-  ws.on("close", () => {
-    console.log("❌ Client disconnected");
-  });
+  ws.on("close", () => console.log("❌ Browser client disconnected"));
+});
+
+// ✅ REST endpoint for SL prims
+app.get("/state", (req, res) => {
+  res.json(latestState);
 });
 
 const PORT = process.env.PORT || 3000;
