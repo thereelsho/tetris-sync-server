@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Box Dude's Endless Tetris</title>
+  <style>
+    :root {
+      --tetris-cyan: #00f0f0;
+      --bg-dark: #1a1b1c;
+    }
+    body {
+      margin: 0;
+      padding: 20px;
+      min-height: 100vh;
+      background: var(--bg-dark);
+      color: #E1E1E1;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .game-container { display: flex; gap: 20px; align-items: flex-start; }
+    .side-container { display: flex; flex-direction: column; gap: 20px; }
+    .preview-container, .hold-container { display: flex; flex-direction: column; align-items: center; }
+    .preview-label, .hold-label { color: var(--tetris-cyan); margin-bottom: 10px; font-size: 18px; }
+    canvas { border: 4px solid var(--tetris-cyan); border-radius: 8px; box-shadow: 0 0 20px rgba(0,240,240,0.2); }
+    #preview, #hold { background: #000; }
+    #stats { display: flex; gap: 20px; font-size: 24px; color: var(--tetris-cyan); margin: 20px 0; }
+    #controls { background: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 8px; text-align: center; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div id="stats">
+    <div id="score">Score: 0</div>
+    <div id="level">Level: 1</div>
+  </div>
+
+  <div class="game-container">
+    <div class="hold-container">
+      <div class="hold-label">Hold:</div>
+      <canvas id="hold" width="100" height="100"></canvas>
+    </div>
+    <canvas id="tetris" width="240" height="400"></canvas>
+    <div class="side-container">
+      <div class="preview-container">
+        <div class="preview-label">Next:</div>
+        <canvas id="preview" width="100" height="100"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div id="controls">
+    Controls:<br>
+    ← → : Move<br>
+    ↑ : Rotate<br>
+    ↓ : Drop<br>
+    Space : Hard Drop<br>
+    Shift : Hold
+  </div>
+
+  <script>
+    const canvas = document.getElementById('tetris');
+    const context = canvas.getContext('2d');
+    const previewCanvas = document.getElementById('preview');
+    const previewContext = previewCanvas.getContext('2d');
+    const holdCanvas = document.getElementById('hold');
+    const holdContext = holdCanvas.getContext('2d');
+    const scoreElement = document.getElementById('score');
+    const levelElement = document.getElementById('level');
+    const blockSize = 20;
+    const cols = canvas.width / blockSize;
+    const rows = canvas.height / blockSize;
+
+    let score = 0, level = 1, linesCleared = 0, canHold = true;
+
+    const board = Array(rows).fill().map(() => Array(cols).fill(0));
+    const pieces = [
+      [[1, 1, 1, 1]], [[1, 1], [1, 1]], [[1, 1, 1], [0, 1, 0]],
+      [[1, 1, 1], [1, 0, 0]], [[1, 1, 1], [0, 0, 1]],
+      [[1, 1, 0], [0, 1, 1]], [[0, 1, 1], [1, 1, 0]]
+    ];
+    const colors = ['#FF0D72','#0DC2FF','#0DFF72','#F538FF','#FF8E0D','#FFE138','#3877FF'];
+
+    let currentPiece = null, currentPiecePos = {x:0,y:0}, currentColor = '', currentPieceIndex = 0;
+    let nextPiece = null, nextColor = '', nextPieceIndex = 0;
+    let holdPiece = null, holdColor = '', holdPieceIndex = -1;
+
+    // ==== Drawing functions ====
+    function drawPiece(context, piece, color, canvas) {
+      const previewBlockSize = 20;
+      const offsetX = (canvas.width - piece[0].length * previewBlockSize) / 2;
+      const offsetY = (canvas.height - piece.length * previewBlockSize) / 2;
+      context.fillStyle = color;
+      piece.forEach((row, y) => {
+        row.forEach((value, x) => {
+          if (value) {
+            context.fillRect(
+              offsetX + x * previewBlockSize,
+              offsetY + y * previewBlockSize,
+              previewBlockSize - 1,
+              previewBlockSize - 1
+            );
+          }
+        });
+      });
+    }
+
+    function drawPreview() {
+      previewContext.fillStyle = '#000';
+      previewContext.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
+      if (nextPiece) {
+        drawPiece(previewContext, nextPiece, nextColor, previewCanvas);
+      }
+    }
+
+    function drawHold() {
+      holdContext.fillStyle = '#000';
+      holdContext.fillRect(0, 0, holdCanvas.width, holdCanvas.height);
+      if (holdPiece) {
+        drawPiece(holdContext, holdPiece, holdColor, holdCanvas);
+      }
+    }
+
+    function draw() {
+      context.fillStyle = '#000';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Draw board
+      board.forEach((row, y) => {
+        row.forEach((value, x) => {
+          if (value) {
+            context.fillStyle = value;
+            context.fillRect(x * blockSize, y * blockSize, blockSize - 1, blockSize - 1);
+          }
+        });
+      });
+
+      // Draw current piece
+      if (currentPiece) {
+        context.fillStyle = currentColor;
+        currentPiece.forEach((row, y) => {
+          row.forEach((value, x) => {
+            if (value) {
+              context.fillRect(
+                (currentPiecePos.x + x) * blockSize,
+                (currentPiecePos.y + y) * blockSize,
+                blockSize - 1,
+                blockSize - 1
+              );
+            }
+          });
+        });
+      }
+    }
+
+    // ==== Game Logic ====
+    function collide(piece = currentPiece, pos = currentPiecePos) {
+      for (let y = 0; y < piece.length; y++) {
+        for (let x = 0; x < piece[y].length; x++) {
+          if (piece[y][x]) {
+            const boardX = pos.x + x;
+            const boardY = pos.y + y;
+            if (boardX < 0 || boardX >= cols || boardY >= rows || (boardY >= 0 && board[boardY][boardX])) {
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    }
+
+    function createPiece() {
+      if (nextPiece === null) {
+        nextPieceIndex = Math.floor(Math.random() * pieces.length);
+        nextPiece = pieces[nextPieceIndex]; nextColor = colors[nextPieceIndex];
+      }
+      currentPiece = nextPiece; currentColor = nextColor; currentPieceIndex = nextPieceIndex;
+      const pieceIndex = Math.floor(Math.random() * pieces.length);
+      nextPiece = pieces[pieceIndex]; nextColor = colors[pieceIndex]; nextPieceIndex = pieceIndex;
+      currentPiecePos = { x: Math.floor((cols - currentPiece[0].length)/2), y: 0 };
+      canHold = true; drawPreview(); drawHold();
+      sendUpdate();
+    }
+
+    function rotate() {
+      const rotated = currentPiece[0].map((_, i) => currentPiece.map(r => r[i]).reverse());
+      const prev = currentPiece;
+      currentPiece = rotated;
+      if (collide()) currentPiece = prev;
+      sendUpdate();
+    }
+
+    function holdCurrentPiece() {
+      if (!canHold) return;
+      if (holdPiece === null) {
+        holdPiece = currentPiece; holdColor = currentColor; holdPieceIndex = currentPieceIndex;
+        createPiece();
+      } else {
+        [holdPiece, currentPiece] = [currentPiece, holdPiece];
+        [holdColor, currentColor] = [currentColor, holdColor];
+        [holdPieceIndex, currentPieceIndex] = [currentPieceIndex, holdPieceIndex];
+        currentPiecePos = { x: Math.floor((cols - currentPiece[0].length)/2), y: 0 };
+      }
+      canHold = false; drawHold();
+      sendUpdate();
+    }
+
+    function drop() {
+      currentPiecePos.y++;
+      if (collide()) {
+        currentPiecePos.y--;
+        merge(); clearLines(); createPiece();
+        if (collide()) {
+          board.forEach(r => r.fill(0)); score=0; level=1; linesCleared=0;
+          holdPiece=null; holdColor=''; holdPieceIndex=-1;
+          scoreElement.textContent = `Score: ${score}`;
+          levelElement.textContent = `Level: ${level}`; drawHold();
+        }
+      }
+      dropCounter=0;
+      sendUpdate();
+    }
+
+    function merge() {
+      currentPiece.forEach((row, y) => {
+        row.forEach((value, x) => {
+          if (value) {
+            const boardY = currentPiecePos.y + y;
+            if (boardY >= 0) board[boardY][currentPiecePos.x + x] = currentColor;
+          }
+        });
+      });
+    }
+
+    function clearLines() {
+      let lines = 0;
+      outer: for (let y = rows - 1; y >= 0; y--) {
+        for (let x = 0; x < cols; x++) if (!board[y][x]) continue outer;
+        const row = board.splice(y, 1)[0]; board.unshift(row.fill(0));
+        y++; lines++;
+      }
+      if (lines > 0) {
+        linesCleared += lines; score += lines * 100 * level;
+        scoreElement.textContent = `Score: ${score}`;
+        const newLevel = Math.floor(linesCleared / 10) + 1;
+        if (newLevel !== level) { level = newLevel; levelElement.textContent = `Level: ${level}`; }
+      }
+    }
+
+    // ==== WebSocket sync ====
+    const ws = new WebSocket("wss://tetris-sync-server.onrender.com");
+
+    ws.onopen = () => console.log("Connected to sync server");
+    ws.onclose = () => console.log("Disconnected from sync server");
+    ws.onerror = (e) => console.error("WS error", e);
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === "state") applyGameState(msg.data);
+    };
+
+    function sendUpdate() {
+      const state = {
+        board,
+        score,
+        level,
+        currentPiece,
+        currentPiecePos,
+        nextPiece,
+        holdPiece
+      };
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "update", data: state }));
+      }
+    }
+
+    function applyGameState(s) {
+      for (let y=0; y<rows; y++) for (let x=0; x<cols; x++) board[y][x] = s.board[y][x];
+      score = s.score; level = s.level;
+      currentPiece = s.currentPiece; currentPiecePos = s.currentPiecePos;
+      nextPiece = s.nextPiece; holdPiece = s.holdPiece;
+      scoreElement.textContent = `Score: ${score}`;
+      levelElement.textContent = `Level: ${level}`;
+      draw();
+    }
+
+    // ==== Main Loop ====
+    let dropCounter = 0, lastTime = 0, dropInterval = 1000;
+    function update(time = 0) {
+      const deltaTime = time - lastTime; lastTime = time; dropCounter += deltaTime;
+      dropInterval = Math.max(100, 1000 - (level - 1) * 100);
+      if (dropCounter > dropInterval) drop();
+      draw(); requestAnimationFrame(update);
+    }
+
+    // ==== Input ====
+    document.addEventListener('keydown', e => {
+      if (!currentPiece) return;
+
+      // Prevent page scrolling when using arrow keys or space
+      if ([32, 37, 38, 39, 40].includes(e.keyCode)) {
+        e.preventDefault();
+      }
+
+      switch (e.keyCode) {
+        case 37: currentPiecePos.x--; if (collide()) currentPiecePos.x++; break; // Left
+        case 39: currentPiecePos.x++; if (collide()) currentPiecePos.x--; break; // Right
+        case 40: drop(); break; // Down
+        case 38: rotate(); break; // Up (rotate)
+        case 32: while (!collide()) currentPiecePos.y++; currentPiecePos.y--; drop(); break; // Space (hard drop)
+        case 16: holdCurrentPiece(); break; // Shift (hold)
+      }
+
+      sendUpdate();
+    });
+
+    // ==== Start Game ====
+    createPiece();
+    update();
+
+    // ==== Auto-refresh when version changes ====
+    let currentVersion = null;
+
+    async function checkVersion() {
+      try {
+        const res = await fetch("version.json?_=" + Date.now());
+        const data = await res.json();
+
+        if (currentVersion === null) {
+          currentVersion = data.version; // first load
+          console.log("Current version:", currentVersion);
+        } else if (data.version !== currentVersion) {
+          console.log("New version detected, reloading...");
+          location.reload(true);
+        }
+      } catch (e) {
+        console.error("Version check failed", e);
+      }
+    }
+
+    setInterval(checkVersion, 30000);
+    checkVersion();
+  </script>
+</body>
+</html>
